@@ -31,22 +31,22 @@ func jsonMsg(c *gin.Context, msg string, err error) {
 	jsonMsgObj(c, msg, nil, err)
 }
 
-func jsonObj(c *gin.Context, obj interface{}, err error) {
+func jsonObj(c *gin.Context, obj any, err error) {
 	jsonMsgObj(c, "", obj, err)
 }
 
-func jsonMsgObj(c *gin.Context, msg string, obj interface{}, err error) {
+func jsonMsgObj(c *gin.Context, msg string, obj any, err error) {
 	m := entity.Msg{
 		Obj: obj,
 	}
 	if err == nil {
 		m.Success = true
 		if msg != "" {
-			m.Msg = msg + " " + I18nWeb(c, "success")
+			m.Msg = msg
 		}
 	} else {
 		m.Success = false
-		m.Msg = msg + " " + I18nWeb(c, "fail") + ": " + err.Error()
+		m.Msg = msg + " (" + err.Error() + ")"
 		logger.Warning(msg+" "+I18nWeb(c, "fail")+": ", err)
 	}
 	c.JSON(http.StatusOK, m)

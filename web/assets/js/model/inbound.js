@@ -34,10 +34,6 @@ const TLS_VERSION_OPTION = {
 };
 
 const TLS_CIPHER_OPTION = {
-    RSA_AES_128_CBC: "TLS_RSA_WITH_AES_128_CBC_SHA",
-    RSA_AES_256_CBC: "TLS_RSA_WITH_AES_256_CBC_SHA",
-    RSA_AES_128_GCM: "TLS_RSA_WITH_AES_128_GCM_SHA256",
-    RSA_AES_256_GCM: "TLS_RSA_WITH_AES_256_GCM_SHA384",
     AES_128_GCM: "TLS_AES_128_GCM_SHA256",
     AES_256_GCM: "TLS_AES_256_GCM_SHA384",
     CHACHA20_POLY1305: "TLS_CHACHA20_POLY1305_SHA256",
@@ -64,6 +60,8 @@ const UTLS_FINGERPRINT = {
     UTLS_QQ: "qq",
     UTLS_RANDOM: "random",
     UTLS_RANDOMIZED: "randomized",
+    UTLS_RONDOMIZEDNOALPN: "randomizednoalpn",
+    UTLS_UNSAFE: "unsafe",
 };
 
 const ALPN_OPTION = {
@@ -494,32 +492,23 @@ class xHTTPStreamSettings extends XrayCommonClass {
         path = '/',
         host = '',
         headers = [],
-        scMaxConcurrentPosts = "100",
+        scMaxBufferedPosts = 30,
         scMaxEachPostBytes = "1000000",
-        scMinPostsIntervalMs = "30",
+        scStreamUpServerSecs = "20-80",
         noSSEHeader = false,
         xPaddingBytes = "100-1000",
-        xmux = {
-            maxConcurrency: "16-32",
-            maxConnections: 0,
-            cMaxReuseTimes: "64-128",
-            cMaxLifetimeMs: 0
-        },
         mode = MODE_OPTION.AUTO,
-        noGRPCHeader = false,
     ) {
         super();
         this.path = path;
         this.host = host;
         this.headers = headers;
-        this.scMaxConcurrentPosts = scMaxConcurrentPosts;
+        this.scMaxBufferedPosts = scMaxBufferedPosts;
         this.scMaxEachPostBytes = scMaxEachPostBytes;
-        this.scMinPostsIntervalMs = scMinPostsIntervalMs;
+        this.scStreamUpServerSecs = scStreamUpServerSecs;
         this.noSSEHeader = noSSEHeader;
         this.xPaddingBytes = xPaddingBytes;
-        this.xmux = xmux;
         this.mode = mode;
-        this.noGRPCHeader = noGRPCHeader;
     }
 
     addHeader(name, value) {
@@ -535,14 +524,12 @@ class xHTTPStreamSettings extends XrayCommonClass {
             json.path,
             json.host,
             XrayCommonClass.toHeaders(json.headers),
-            json.scMaxConcurrentPosts,
+            json.scMaxBufferedPosts,
             json.scMaxEachPostBytes,
-            json.scMinPostsIntervalMs,
+            json.scStreamUpServerSecs,
             json.noSSEHeader,
             json.xPaddingBytes,
-            json.xmux,
             json.mode,
-            json.noGRPCHeader
         );
     }
 
@@ -551,19 +538,12 @@ class xHTTPStreamSettings extends XrayCommonClass {
             path: this.path,
             host: this.host,
             headers: XrayCommonClass.toV2Headers(this.headers, false),
-            scMaxConcurrentPosts: this.scMaxConcurrentPosts,
+            scMaxBufferedPosts: this.scMaxBufferedPosts,
             scMaxEachPostBytes: this.scMaxEachPostBytes,
-            scMinPostsIntervalMs: this.scMinPostsIntervalMs,
+            scStreamUpServerSecs: this.scStreamUpServerSecs,
             noSSEHeader: this.noSSEHeader,
             xPaddingBytes: this.xPaddingBytes,
-            xmux: {
-                maxConcurrency: this.xmux.maxConcurrency,
-                maxConnections: this.xmux.maxConnections,
-                cMaxReuseTimes: this.xmux.cMaxReuseTimes,
-                cMaxLifetimeMs: this.xmux.cMaxLifetimeMs
-            },
             mode: this.mode,
-            noGRPCHeader: this.noGRPCHeader
         };
     }
 }
@@ -575,6 +555,7 @@ class TlsStreamSettings extends XrayCommonClass {
         maxVersion = TLS_VERSION_OPTION.TLS13,
         cipherSuites = '',
         rejectUnknownSni = false,
+        verifyPeerCertInNames = ['dns.google', 'cloudflare-dns.com'],
         disableSystemRoot = false,
         enableSessionResumption = false,
         certificates = [new TlsStreamSettings.Cert()],
@@ -587,6 +568,7 @@ class TlsStreamSettings extends XrayCommonClass {
         this.maxVersion = maxVersion;
         this.cipherSuites = cipherSuites;
         this.rejectUnknownSni = rejectUnknownSni;
+        this.verifyPeerCertInNames = Array.isArray(verifyPeerCertInNames) ? verifyPeerCertInNames.join(",") : verifyPeerCertInNames;
         this.disableSystemRoot = disableSystemRoot;
         this.enableSessionResumption = enableSessionResumption;
         this.certs = certificates;
@@ -618,6 +600,7 @@ class TlsStreamSettings extends XrayCommonClass {
             json.maxVersion,
             json.cipherSuites,
             json.rejectUnknownSni,
+            json.verifyPeerCertInNames,
             json.disableSystemRoot,
             json.enableSessionResumption,
             certs,
@@ -633,6 +616,7 @@ class TlsStreamSettings extends XrayCommonClass {
             maxVersion: this.maxVersion,
             cipherSuites: this.cipherSuites,
             rejectUnknownSni: this.rejectUnknownSni,
+            verifyPeerCertInNames: this.verifyPeerCertInNames.split(","),
             disableSystemRoot: this.disableSystemRoot,
             enableSessionResumption: this.enableSessionResumption,
             certificates: TlsStreamSettings.toJsonArray(this.certs),
@@ -714,7 +698,10 @@ TlsStreamSettings.Cert = class extends XrayCommonClass {
 };
 
 TlsStreamSettings.Settings = class extends XrayCommonClass {
-    constructor(allowInsecure = false, fingerprint = '') {
+    constructor(
+        allowInsecure = false,
+        fingerprint = UTLS_FINGERPRINT.UTLS_CHROME,
+    ) {
         super();
         this.allowInsecure = allowInsecure;
         this.fingerprint = fingerprint;
@@ -780,7 +767,7 @@ class RealityStreamSettings extends XrayCommonClass {
             json.maxClient,
             json.maxTimediff,
             json.shortIds,
-            json.settings,
+            settings,
         );
     }
 
@@ -803,7 +790,7 @@ class RealityStreamSettings extends XrayCommonClass {
 RealityStreamSettings.Settings = class extends XrayCommonClass {
     constructor(
         publicKey = '',
-        fingerprint = UTLS_FINGERPRINT.UTLS_RANDOM,
+        fingerprint = UTLS_FINGERPRINT.UTLS_CHROME,
         serverName = '',
         spiderX = '/'
     ) {
@@ -838,7 +825,7 @@ class SockoptStreamSettings extends XrayCommonClass {
         mark = 0,
         tproxy = "off",
         tcpMptcp = false,
-        tcpNoDelay = false,
+        penetrate = false,
         domainStrategy = DOMAIN_STRATEGY_OPTION.USE_IP,
         tcpMaxSeg = 1440,
         dialerProxy = "",
@@ -856,7 +843,7 @@ class SockoptStreamSettings extends XrayCommonClass {
         this.mark = mark;
         this.tproxy = tproxy;
         this.tcpMptcp = tcpMptcp;
-        this.tcpNoDelay = tcpNoDelay;
+        this.penetrate = penetrate;
         this.domainStrategy = domainStrategy;
         this.tcpMaxSeg = tcpMaxSeg;
         this.dialerProxy = dialerProxy;
@@ -877,7 +864,7 @@ class SockoptStreamSettings extends XrayCommonClass {
             json.mark,
             json.tproxy,
             json.tcpMptcp,
-            json.tcpNoDelay,
+            json.penetrate,
             json.domainStrategy,
             json.tcpMaxSeg,
             json.dialerProxy,
@@ -898,7 +885,7 @@ class SockoptStreamSettings extends XrayCommonClass {
             mark: this.mark,
             tproxy: this.tproxy,
             tcpMptcp: this.tcpMptcp,
-            tcpNoDelay: this.tcpNoDelay,
+            penetrate: this.penetrate,
             domainStrategy: this.domainStrategy,
             tcpMaxSeg: this.tcpMaxSeg,
             dialerProxy: this.dialerProxy,
@@ -1063,7 +1050,7 @@ class Allocate extends XrayCommonClass {
 
 class Inbound extends XrayCommonClass {
     constructor(
-        port = RandomUtil.randomIntRange(10000, 60000),
+        port = RandomUtil.randomInteger(10000, 60000),
         listen = '',
         protocol = Protocols.VLESS,
         settings = null,
@@ -1239,7 +1226,7 @@ class Inbound extends XrayCommonClass {
     }
 
     reset() {
-        this.port = RandomUtil.randomIntRange(10000, 60000);
+        this.port = RandomUtil.randomInteger(10000, 60000);
         this.listen = '';
         this.protocol = Protocols.VMESS;
         this.settings = Inbound.Settings.getSettings(Protocols.VMESS);
@@ -1300,7 +1287,7 @@ class Inbound extends XrayCommonClass {
             obj.mode = xhttp.mode;
         }
 
-        if (security === 'tls') {
+        if (tls === 'tls') {
             if (!ObjectUtil.isEmpty(this.stream.tls.sni)) {
                 obj.sni = this.stream.tls.sni;
             }
@@ -1315,7 +1302,7 @@ class Inbound extends XrayCommonClass {
             }
         }
 
-        return 'vmess://' + base64(JSON.stringify(obj, null, 2));
+        return 'vmess://' + Base64.encode(JSON.stringify(obj, null, 2));
     }
 
     genVLESSLink(address = '', port = this.port, forceTls, remark = '', clientId, flow) {
@@ -1487,7 +1474,7 @@ class Inbound extends XrayCommonClass {
         if (this.isSS2022) password.push(settings.password);
         if (this.isSSMultiUser) password.push(clientPassword);
 
-        let link = `ss://${safeBase64(settings.method + ':' + password.join(':'))}@${address}:${port}`;
+        let link = `ss://${Base64.encode(`${settings.method}:${password.join(':')}`, true)}@${address}:${port}`;
         const url = new URL(link);
         for (const [key, value] of params) {
             url.searchParams.set(key, value)
@@ -1800,6 +1787,7 @@ Inbound.VmessSettings.VMESS = class extends XrayCommonClass {
         enable = true,
         tgId = '',
         subId = RandomUtil.randomLowerAndNum(16),
+        comment = '',
         reset = 0
     ) {
         super();
@@ -1812,6 +1800,7 @@ Inbound.VmessSettings.VMESS = class extends XrayCommonClass {
         this.enable = enable;
         this.tgId = tgId;
         this.subId = subId;
+        this.comment = comment;
         this.reset = reset;
     }
 
@@ -1826,6 +1815,7 @@ Inbound.VmessSettings.VMESS = class extends XrayCommonClass {
             json.enable,
             json.tgId,
             json.subId,
+            json.comment,
             json.reset,
         );
     }
@@ -1847,11 +1837,11 @@ Inbound.VmessSettings.VMESS = class extends XrayCommonClass {
         }
     }
     get _totalGB() {
-        return toFixed(this.totalGB / ONE_GB, 2);
+        return NumberFormatter.toFixed(this.totalGB / SizeFormatter.ONE_GB, 2);
     }
 
     set _totalGB(gb) {
-        this.totalGB = toFixed(gb * ONE_GB, 0);
+        this.totalGB = NumberFormatter.toFixed(gb * SizeFormatter.ONE_GB, 0);
     }
 
 };
@@ -1906,6 +1896,7 @@ Inbound.VLESSSettings.VLESS = class extends XrayCommonClass {
         enable = true,
         tgId = '',
         subId = RandomUtil.randomLowerAndNum(16),
+        comment = '',
         reset = 0
     ) {
         super();
@@ -1918,6 +1909,7 @@ Inbound.VLESSSettings.VLESS = class extends XrayCommonClass {
         this.enable = enable;
         this.tgId = tgId;
         this.subId = subId;
+        this.comment = comment;
         this.reset = reset;
     }
 
@@ -1932,6 +1924,7 @@ Inbound.VLESSSettings.VLESS = class extends XrayCommonClass {
             json.enable,
             json.tgId,
             json.subId,
+            json.comment,
             json.reset,
         );
     }
@@ -1954,11 +1947,11 @@ Inbound.VLESSSettings.VLESS = class extends XrayCommonClass {
         }
     }
     get _totalGB() {
-        return toFixed(this.totalGB / ONE_GB, 2);
+        return NumberFormatter.toFixed(this.totalGB / SizeFormatter.ONE_GB, 2);
     }
 
     set _totalGB(gb) {
-        this.totalGB = toFixed(gb * ONE_GB, 0);
+        this.totalGB = NumberFormatter.toFixed(gb * SizeFormatter.ONE_GB, 0);
     }
 };
 Inbound.VLESSSettings.Fallback = class extends XrayCommonClass {
@@ -2042,6 +2035,7 @@ Inbound.TrojanSettings.Trojan = class extends XrayCommonClass {
         enable = true,
         tgId = '',
         subId = RandomUtil.randomLowerAndNum(16),
+        comment = '',
         reset = 0
     ) {
         super();
@@ -2053,6 +2047,7 @@ Inbound.TrojanSettings.Trojan = class extends XrayCommonClass {
         this.enable = enable;
         this.tgId = tgId;
         this.subId = subId;
+        this.comment = comment;
         this.reset = reset;
     }
 
@@ -2066,6 +2061,7 @@ Inbound.TrojanSettings.Trojan = class extends XrayCommonClass {
             enable: this.enable,
             tgId: this.tgId,
             subId: this.subId,
+            comment: this.comment,
             reset: this.reset,
         };
     }
@@ -2080,6 +2076,7 @@ Inbound.TrojanSettings.Trojan = class extends XrayCommonClass {
             json.enable,
             json.tgId,
             json.subId,
+            json.comment,
             json.reset,
         );
     }
@@ -2102,11 +2099,11 @@ Inbound.TrojanSettings.Trojan = class extends XrayCommonClass {
         }
     }
     get _totalGB() {
-        return toFixed(this.totalGB / ONE_GB, 2);
+        return NumberFormatter.toFixed(this.totalGB / SizeFormatter.ONE_GB, 2);
     }
 
     set _totalGB(gb) {
-        this.totalGB = toFixed(gb * ONE_GB, 0);
+        this.totalGB = NumberFormatter.toFixed(gb * SizeFormatter.ONE_GB, 0);
     }
 
 };
@@ -2199,6 +2196,7 @@ Inbound.ShadowsocksSettings.Shadowsocks = class extends XrayCommonClass {
         enable = true,
         tgId = '',
         subId = RandomUtil.randomLowerAndNum(16),
+        comment = '',
         reset = 0
     ) {
         super();
@@ -2211,6 +2209,7 @@ Inbound.ShadowsocksSettings.Shadowsocks = class extends XrayCommonClass {
         this.enable = enable;
         this.tgId = tgId;
         this.subId = subId;
+        this.comment = comment;
         this.reset = reset;
     }
 
@@ -2225,6 +2224,7 @@ Inbound.ShadowsocksSettings.Shadowsocks = class extends XrayCommonClass {
             enable: this.enable,
             tgId: this.tgId,
             subId: this.subId,
+            comment: this.comment,
             reset: this.reset,
         };
     }
@@ -2240,6 +2240,7 @@ Inbound.ShadowsocksSettings.Shadowsocks = class extends XrayCommonClass {
             json.enable,
             json.tgId,
             json.subId,
+            json.comment,
             json.reset,
         );
     }
@@ -2262,11 +2263,11 @@ Inbound.ShadowsocksSettings.Shadowsocks = class extends XrayCommonClass {
         }
     }
     get _totalGB() {
-        return toFixed(this.totalGB / ONE_GB, 2);
+        return NumberFormatter.toFixed(this.totalGB / SizeFormatter.ONE_GB, 2);
     }
 
     set _totalGB(gb) {
-        this.totalGB = toFixed(gb * ONE_GB, 0);
+        this.totalGB = NumberFormatter.toFixed(gb * SizeFormatter.ONE_GB, 0);
     }
 
 };

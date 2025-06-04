@@ -39,6 +39,8 @@ const UTLS_FINGERPRINT = {
     UTLS_QQ: "qq",
     UTLS_RANDOM: "random",
     UTLS_RANDOMIZED: "randomized",
+    UTLS_RONDOMIZEDNOALPN: "randomizednoalpn",
+    UTLS_UNSAFE: "unsafe",
 };
 
 const ALPN_OPTION = {
@@ -84,6 +86,16 @@ const MODE_OPTION = {
     STREAM_ONE: "stream-one",
 };
 
+const Address_Port_Strategy = {
+    NONE: "none",
+    SrvPortOnly: "srvportonly",
+    SrvAddressOnly: "srvaddressonly",
+    SrvPortAndAddress: "srvportandaddress",
+    TxtPortOnly: "txtportonly",
+    TxtAddressOnly: "txtaddressonly",
+    TxtPortAndAddress: "txtportandaddress"
+};
+
 Object.freeze(Protocols);
 Object.freeze(SSMethods);
 Object.freeze(TLS_FLOW_CONTROL);
@@ -93,7 +105,7 @@ Object.freeze(OutboundDomainStrategies);
 Object.freeze(WireguardDomainStrategy);
 Object.freeze(USERS_SECURITY);
 Object.freeze(MODE_OPTION);
-
+Object.freeze(Address_Port_Strategy);
 
 class CommonClass {
 
@@ -287,11 +299,24 @@ class xHTTPStreamSettings extends CommonClass {
         path = '/',
         host = '',
         mode = '',
+        noGRPCHeader = false,
+        scMinPostsIntervalMs = "30",
+        xmux = {
+            maxConcurrency: "16-32",
+            maxConnections: 0,
+            cMaxReuseTimes: 0,
+            hMaxRequestTimes: "600-900",
+            hMaxReusableSecs: "1800-3000",
+            hKeepAlivePeriod: 0,
+        },
     ) {
         super();
         this.path = path;
         this.host = host;
         this.mode = mode;
+        this.noGRPCHeader = noGRPCHeader;
+        this.scMinPostsIntervalMs = scMinPostsIntervalMs;
+        this.xmux = xmux;
     }
 
     static fromJson(json = {}) {
@@ -299,6 +324,9 @@ class xHTTPStreamSettings extends CommonClass {
             json.path,
             json.host,
             json.mode,
+            json.noGRPCHeader,
+            json.scMinPostsIntervalMs,
+            json.xmux
         );
     }
 
@@ -307,6 +335,16 @@ class xHTTPStreamSettings extends CommonClass {
             path: this.path,
             host: this.host,
             mode: this.mode,
+            noGRPCHeader: this.noGRPCHeader,
+            scMinPostsIntervalMs: this.scMinPostsIntervalMs,
+            xmux: {
+                maxConcurrency: this.xmux.maxConcurrency,
+                maxConnections: this.xmux.maxConnections,
+                cMaxReuseTimes: this.xmux.cMaxReuseTimes,
+                hMaxRequestTimes: this.xmux.hMaxRequestTimes,
+                hMaxReusableSecs: this.xmux.hMaxReusableSecs,
+                hKeepAlivePeriod: this.xmux.hKeepAlivePeriod,
+            },
         };
     }
 }
@@ -384,14 +422,16 @@ class SockoptStreamSettings extends CommonClass {
         tcpFastOpen = false,
         tcpKeepAliveInterval = 0,
         tcpMptcp = false,
-        tcpNoDelay = false
+        penetrate = false,
+        addressPortStrategy = Address_Port_Strategy.NONE,
     ) {
         super();
         this.dialerProxy = dialerProxy;
         this.tcpFastOpen = tcpFastOpen;
         this.tcpKeepAliveInterval = tcpKeepAliveInterval;
         this.tcpMptcp = tcpMptcp;
-        this.tcpNoDelay = tcpNoDelay;
+        this.penetrate = penetrate;
+        this.addressPortStrategy = addressPortStrategy;
     }
 
     static fromJson(json = {}) {
@@ -401,7 +441,8 @@ class SockoptStreamSettings extends CommonClass {
             json.tcpFastOpen,
             json.tcpKeepAliveInterval,
             json.tcpMptcp,
-            json.tcpNoDelay,
+            json.penetrate,
+            json.addressPortStrategy
         );
     }
 
@@ -411,7 +452,8 @@ class SockoptStreamSettings extends CommonClass {
             tcpFastOpen: this.tcpFastOpen,
             tcpKeepAliveInterval: this.tcpKeepAliveInterval,
             tcpMptcp: this.tcpMptcp,
-            tcpNoDelay: this.tcpNoDelay,
+            penetrate: this.penetrate,
+            addressPortStrategy: this.addressPortStrategy
         };
     }
 }
@@ -694,6 +736,7 @@ class Outbound extends CommonClass {
         let headerType = url.searchParams.get('headerType') ?? undefined;
         let host = url.searchParams.get('host') ?? undefined;
         let path = url.searchParams.get('path') ?? undefined;
+        let mode = url.searchParams.get('mode') ?? undefined;
 
         if (type === 'tcp' || type === 'none') {
             stream.tcp = new TcpStreamSettings(headerType ?? 'none', host, path);

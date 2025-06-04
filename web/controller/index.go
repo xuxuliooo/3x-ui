@@ -9,13 +9,14 @@ import (
 	"x-ui/web/service"
 	"x-ui/web/session"
 
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
 type LoginForm struct {
-	Username    string `json:"username" form:"username"`
-	Password    string `json:"password" form:"password"`
-	LoginSecret string `json:"loginSecret" form:"loginSecret"`
+	Username    	string `json:"username" form:"username"`
+	Password    	string `json:"password" form:"password"`
+	TwoFactorCode	string `json:"twoFactorCode" form:"twoFactorCode"`
 }
 
 type IndexController struct {
@@ -36,7 +37,7 @@ func (a *IndexController) initRouter(g *gin.RouterGroup) {
 	g.GET("/", a.index)
 	g.POST("/login", a.login)
 	g.GET("/logout", a.logout)
-	g.POST("/getSecretStatus", a.getSecretStatus)
+	g.POST("/getTwoFactorEnable", a.getTwoFactorEnable)
 }
 
 func (a *IndexController) index(c *gin.Context) {
@@ -49,8 +50,8 @@ func (a *IndexController) index(c *gin.Context) {
 
 func (a *IndexController) login(c *gin.Context) {
 	var form LoginForm
-	err := c.ShouldBind(&form)
-	if err != nil {
+
+	if err := c.ShouldBind(&form); err != nil {
 		pureJsonMsg(c, http.StatusOK, false, I18nWeb(c, "pages.login.toasts.invalidFormData"))
 		return
 	}
@@ -63,34 +64,35 @@ func (a *IndexController) login(c *gin.Context) {
 		return
 	}
 
-	user := a.userService.CheckUser(form.Username, form.Password, form.LoginSecret)
+	user := a.userService.CheckUser(form.Username, form.Password, form.TwoFactorCode)
 	timeStr := time.Now().Format("2006-01-02 15:04:05")
 	safeUser := template.HTMLEscapeString(form.Username)
 	safePass := template.HTMLEscapeString(form.Password)
-	safeSecret := template.HTMLEscapeString(form.LoginSecret)
+
 	if user == nil {
-		logger.Warningf("wrong username: \"%s\", password: \"%s\", secret: \"%s\", IP: \"%s\"", safeUser, safePass, safeSecret, getRemoteIp(c))
+		logger.Warningf("wrong username: \"%s\", password: \"%s\", IP: \"%s\"", safeUser, safePass, getRemoteIp(c))
 		a.tgbot.UserLoginNotify(safeUser, safePass, getRemoteIp(c), timeStr, 0)
 		pureJsonMsg(c, http.StatusOK, false, I18nWeb(c, "pages.login.toasts.wrongUsernameOrPassword"))
 		return
-	} else {
-		logger.Infof("%s logged in successfully, Ip Address: %s\n", safeUser, getRemoteIp(c))
-		a.tgbot.UserLoginNotify(safeUser, ``, getRemoteIp(c), timeStr, 1)
 	}
+
+	logger.Infof("%s logged in successfully, Ip Address: %s\n", safeUser, getRemoteIp(c))
+	a.tgbot.UserLoginNotify(safeUser, ``, getRemoteIp(c), timeStr, 1)
 
 	sessionMaxAge, err := a.settingService.GetSessionMaxAge()
 	if err != nil {
 		logger.Warning("Unable to get session's max age from DB")
 	}
 
-	err = session.SetMaxAge(c, sessionMaxAge*60)
-	if err != nil {
-		logger.Warning("Unable to set session's max age")
+	session.SetMaxAge(c, sessionMaxAge*60)
+	session.SetLoginUser(c, user)
+	if err := sessions.Default(c).Save(); err != nil {
+		logger.Warning("Unable to save session: ", err)
+		return
 	}
 
-	err = session.SetLoginUser(c, user)
-	logger.Infof("%s logged in successfully", user.Username)
-	jsonMsg(c, I18nWeb(c, "pages.login.toasts.successLogin"), err)
+	logger.Infof("%s logged in successfully", safeUser)
+	jsonMsg(c, I18nWeb(c, "pages.login.toasts.successLogin"), nil)
 }
 
 func (a *IndexController) logout(c *gin.Context) {
@@ -99,11 +101,14 @@ func (a *IndexController) logout(c *gin.Context) {
 		logger.Infof("%s logged out successfully", user.Username)
 	}
 	session.ClearSession(c)
+	if err := sessions.Default(c).Save(); err != nil {
+		logger.Warning("Unable to save session after clearing:", err)
+	}
 	c.Redirect(http.StatusTemporaryRedirect, c.GetString("base_path"))
 }
 
-func (a *IndexController) getSecretStatus(c *gin.Context) {
-	status, err := a.settingService.GetSecretStatus()
+func (a *IndexController) getTwoFactorEnable(c *gin.Context) {
+	status, err := a.settingService.GetTwoFactorEnable()
 	if err == nil {
 		jsonObj(c, status, nil)
 	}

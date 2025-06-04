@@ -92,6 +92,8 @@ type Release struct {
 type ServerService struct {
 	xrayService    XrayService
 	inboundService InboundService
+	cachedIPv4     string
+	cachedIPv6     string
 }
 
 func getPublicIP(url string) string {
@@ -120,6 +122,7 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
 		T: now,
 	}
 
+	// CPU stats
 	percents, err := cpu.Percent(0, false)
 	if err != nil {
 		logger.Warning("get cpu percent failed:", err)
@@ -133,22 +136,17 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
 	}
 
 	status.LogicalPro = runtime.NumCPU()
-	if p != nil && p.IsRunning() {
-		status.AppStats.Uptime = p.GetUptime()
-	} else {
-		status.AppStats.Uptime = 0
-	}
 
 	cpuInfos, err := cpu.Info()
 	if err != nil {
 		logger.Warning("get cpu info failed:", err)
 	} else if len(cpuInfos) > 0 {
-		cpuInfo := cpuInfos[0]
-		status.CpuSpeedMhz = cpuInfo.Mhz // setting CPU speed in MHz
+		status.CpuSpeedMhz = cpuInfos[0].Mhz
 	} else {
 		logger.Warning("could not find cpu info")
 	}
 
+	// Uptime
 	upTime, err := host.Uptime()
 	if err != nil {
 		logger.Warning("get uptime failed:", err)
@@ -156,6 +154,7 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
 		status.Uptime = upTime
 	}
 
+	// Memory stats
 	memInfo, err := mem.VirtualMemory()
 	if err != nil {
 		logger.Warning("get virtual memory failed:", err)
@@ -172,14 +171,16 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
 		status.Swap.Total = swapInfo.Total
 	}
 
-	distInfo, err := disk.Usage("/")
+	// Disk stats
+	diskInfo, err := disk.Usage("/")
 	if err != nil {
-		logger.Warning("get dist usage failed:", err)
+		logger.Warning("get disk usage failed:", err)
 	} else {
-		status.Disk.Current = distInfo.Used
-		status.Disk.Total = distInfo.Total
+		status.Disk.Current = diskInfo.Used
+		status.Disk.Total = diskInfo.Total
 	}
 
+	// Load averages
 	avgState, err := load.Avg()
 	if err != nil {
 		logger.Warning("get load avg failed:", err)
@@ -187,6 +188,7 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
 		status.Loads = []float64{avgState.Load1, avgState.Load5, avgState.Load15}
 	}
 
+	// Network stats
 	ioStats, err := net.IOCounters(false)
 	if err != nil {
 		logger.Warning("get io counters failed:", err)
@@ -207,6 +209,7 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
 		logger.Warning("can not find io counters")
 	}
 
+	// TCP/UDP connections
 	status.TcpCount, err = sys.GetTCPCount()
 	if err != nil {
 		logger.Warning("get tcp connections failed:", err)
@@ -217,9 +220,15 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
 		logger.Warning("get udp connections failed:", err)
 	}
 
-	status.PublicIP.IPv4 = getPublicIP("https://api.ipify.org")
-	status.PublicIP.IPv6 = getPublicIP("https://api6.ipify.org")
+	// IP fetching with caching
+	if s.cachedIPv4 == "" || s.cachedIPv6 == "" {
+		s.cachedIPv4 = getPublicIP("https://api.ipify.org")
+		s.cachedIPv6 = getPublicIP("https://api6.ipify.org")
+	}
+	status.PublicIP.IPv4 = s.cachedIPv4
+	status.PublicIP.IPv6 = s.cachedIPv6
 
+	// Xray status
 	if s.xrayService.IsXrayRunning() {
 		status.Xray.State = Running
 		status.Xray.ErrorMsg = ""
@@ -233,9 +242,10 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
 		status.Xray.ErrorMsg = s.xrayService.GetXrayResult()
 	}
 	status.Xray.Version = s.xrayService.GetXrayVersion()
+
+	// Application stats
 	var rtm runtime.MemStats
 	runtime.ReadMemStats(&rtm)
-
 	status.AppStats.Mem = rtm.Sys
 	status.AppStats.Threads = uint32(runtime.NumGoroutine())
 	if p != nil && p.IsRunning() {
@@ -285,34 +295,29 @@ func (s *ServerService) GetXrayVersions() ([]string, error) {
 			continue
 		}
 
-		if (major == 1 && minor == 8 && patch == 24) ||
-			(major == 24 && ((minor > 11) || (minor == 11 && patch >= 30))) ||
-			(major > 24) {
+		if major > 25 || (major == 25 && minor > 3) || (major == 25 && minor == 3 && patch >= 3) {
 			versions = append(versions, release.TagName)
 		}
 	}
 	return versions, nil
 }
 
-func (s *ServerService) StopXrayService() (string error) {
+func (s *ServerService) StopXrayService() error {
 	err := s.xrayService.StopXray()
 	if err != nil {
 		logger.Error("stop xray failed:", err)
 		return err
 	}
-
 	return nil
 }
 
-func (s *ServerService) RestartXrayService() (string error) {
+func (s *ServerService) RestartXrayService() error {
 	s.xrayService.StopXray()
-	defer func() {
-		err := s.xrayService.RestartXray(true)
-		if err != nil {
-			logger.Error("start xray failed:", err)
-		}
-	}()
-
+	err := s.xrayService.RestartXray(true)
+	if err != nil {
+		logger.Error("start xray failed:", err)
+		return err
+	}
 	return nil
 }
 
@@ -442,7 +447,7 @@ func (s *ServerService) GetLogs(count string, level string, syslog string) []str
 	return lines
 }
 
-func (s *ServerService) GetConfigJson() (interface{}, error) {
+func (s *ServerService) GetConfigJson() (any, error) {
 	config, err := s.xrayService.GetXrayConfig()
 	if err != nil {
 		return nil, err
@@ -452,7 +457,7 @@ func (s *ServerService) GetConfigJson() (interface{}, error) {
 		return nil, err
 	}
 
-	var jsonData interface{}
+	var jsonData any
 	err = json.Unmarshal(contents, &jsonData)
 	if err != nil {
 		return nil, err
@@ -499,35 +504,43 @@ func (s *ServerService) ImportDB(file multipart.File) error {
 		return common.NewErrorf("Error resetting file reader: %v", err)
 	}
 
-	// Save the file as temporary file
+	// Save the file as a temporary file
 	tempPath := fmt.Sprintf("%s.temp", config.GetDBPath())
-	// Remove the existing fallback file (if any) before creating one
-	_, err = os.Stat(tempPath)
-	if err == nil {
-		errRemove := os.Remove(tempPath)
-		if errRemove != nil {
+
+	// Remove the existing temporary file (if any)
+	if _, err := os.Stat(tempPath); err == nil {
+		if errRemove := os.Remove(tempPath); errRemove != nil {
 			return common.NewErrorf("Error removing existing temporary db file: %v", errRemove)
 		}
 	}
+
 	// Create the temporary file
 	tempFile, err := os.Create(tempPath)
 	if err != nil {
 		return common.NewErrorf("Error creating temporary db file: %v", err)
 	}
-	defer tempFile.Close()
 
-	// Remove temp file before returning
-	defer os.Remove(tempPath)
+	// Robust deferred cleanup for the temporary file
+	defer func() {
+		if tempFile != nil {
+			if cerr := tempFile.Close(); cerr != nil {
+				logger.Warningf("Warning: failed to close temp file: %v", cerr)
+			}
+		}
+		if _, err := os.Stat(tempPath); err == nil {
+			if rerr := os.Remove(tempPath); rerr != nil {
+				logger.Warningf("Warning: failed to remove temp file: %v", rerr)
+			}
+		}
+	}()
 
 	// Save uploaded file to temporary file
-	_, err = io.Copy(tempFile, file)
-	if err != nil {
+	if _, err = io.Copy(tempFile, file); err != nil {
 		return common.NewErrorf("Error saving db: %v", err)
 	}
 
-	// Check if we can init db or not
-	err = database.InitDB(tempPath)
-	if err != nil {
+	// Check if we can init the db or not
+	if err = database.InitDB(tempPath); err != nil {
 		return common.NewErrorf("Error checking db: %v", err)
 	}
 
@@ -536,54 +549,116 @@ func (s *ServerService) ImportDB(file multipart.File) error {
 
 	// Backup the current database for fallback
 	fallbackPath := fmt.Sprintf("%s.backup", config.GetDBPath())
+
 	// Remove the existing fallback file (if any)
-	_, err = os.Stat(fallbackPath)
-	if err == nil {
-		errRemove := os.Remove(fallbackPath)
-		if errRemove != nil {
+	if _, err := os.Stat(fallbackPath); err == nil {
+		if errRemove := os.Remove(fallbackPath); errRemove != nil {
 			return common.NewErrorf("Error removing existing fallback db file: %v", errRemove)
 		}
 	}
+
 	// Move the current database to the fallback location
-	err = os.Rename(config.GetDBPath(), fallbackPath)
-	if err != nil {
-		return common.NewErrorf("Error backing up temporary db file: %v", err)
+	if err = os.Rename(config.GetDBPath(), fallbackPath); err != nil {
+		return common.NewErrorf("Error backing up current db file: %v", err)
 	}
 
-	// Remove the temporary file before returning
-	defer os.Remove(fallbackPath)
+	// Defer fallback cleanup ONLY if everything goes well
+	defer func() {
+		if _, err := os.Stat(fallbackPath); err == nil {
+			if rerr := os.Remove(fallbackPath); rerr != nil {
+				logger.Warningf("Warning: failed to remove fallback file: %v", rerr)
+			}
+		}
+	}()
 
 	// Move temp to DB path
-	err = os.Rename(tempPath, config.GetDBPath())
-	if err != nil {
-		errRename := os.Rename(fallbackPath, config.GetDBPath())
-		if errRename != nil {
+	if err = os.Rename(tempPath, config.GetDBPath()); err != nil {
+		// Restore from fallback
+		if errRename := os.Rename(fallbackPath, config.GetDBPath()); errRename != nil {
 			return common.NewErrorf("Error moving db file and restoring fallback: %v", errRename)
 		}
 		return common.NewErrorf("Error moving db file: %v", err)
 	}
 
 	// Migrate DB
-	err = database.InitDB(config.GetDBPath())
-	if err != nil {
-		errRename := os.Rename(fallbackPath, config.GetDBPath())
-		if errRename != nil {
+	if err = database.InitDB(config.GetDBPath()); err != nil {
+		if errRename := os.Rename(fallbackPath, config.GetDBPath()); errRename != nil {
 			return common.NewErrorf("Error migrating db and restoring fallback: %v", errRename)
 		}
 		return common.NewErrorf("Error migrating db: %v", err)
 	}
+
 	s.inboundService.MigrateDB()
 
 	// Start Xray
-	err = s.RestartXrayService()
-	if err != nil {
-		return common.NewErrorf("Imported DB but Failed to start Xray: %v", err)
+	if err = s.RestartXrayService(); err != nil {
+		return common.NewErrorf("Imported DB but failed to start Xray: %v", err)
 	}
 
 	return nil
 }
 
-func (s *ServerService) GetNewX25519Cert() (interface{}, error) {
+func (s *ServerService) UpdateGeofile(fileName string) error {
+	files := []struct {
+		URL      string
+		FileName string
+	}{
+		{"https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat", "geoip.dat"},
+		{"https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat", "geosite.dat"},
+		{"https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geoip.dat", "geoip_IR.dat"},
+		{"https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geosite.dat", "geosite_IR.dat"},
+		{"https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat", "geoip_RU.dat"},
+		{"https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat", "geosite_RU.dat"},
+	}
+
+	downloadFile := func(url, destPath string) error {
+		resp, err := http.Get(url)
+		if err != nil {
+			return common.NewErrorf("Failed to download Geofile from %s: %v", url, err)
+		}
+		defer resp.Body.Close()
+
+		file, err := os.Create(destPath)
+		if err != nil {
+			return common.NewErrorf("Failed to create Geofile %s: %v", destPath, err)
+		}
+		defer file.Close()
+
+		_, err = io.Copy(file, resp.Body)
+		if err != nil {
+			return common.NewErrorf("Failed to save Geofile %s: %v", destPath, err)
+		}
+
+		return nil
+	}
+
+	var fileURL string
+	for _, file := range files {
+		if file.FileName == fileName {
+			fileURL = file.URL
+			break
+		}
+	}
+
+	if fileURL == "" {
+		return common.NewErrorf("File '%s' not found in the list of Geofiles", fileName)
+	}
+
+	destPath := fmt.Sprintf("%s/%s", config.GetBinFolderPath(), fileName)
+
+	if err := downloadFile(fileURL, destPath); err != nil {
+		return common.NewErrorf("Error downloading Geofile '%s': %v", fileName, err)
+	}
+
+	err := s.RestartXrayService()
+	if err != nil {
+		return common.NewErrorf("Updated Geofile '%s' but Failed to start Xray: %v", fileName, err)
+	}
+
+	return nil
+}
+
+func (s *ServerService) GetNewX25519Cert() (any, error) {
 	// Run the command
 	cmd := exec.Command(xray.GetBinaryPath(), "x25519")
 	var out bytes.Buffer
@@ -601,7 +676,7 @@ func (s *ServerService) GetNewX25519Cert() (interface{}, error) {
 	privateKey := strings.TrimSpace(privateKeyLine[1])
 	publicKey := strings.TrimSpace(publicKeyLine[1])
 
-	keyPair := map[string]interface{}{
+	keyPair := map[string]any{
 		"privateKey": privateKey,
 		"publicKey":  publicKey,
 	}

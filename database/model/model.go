@@ -21,10 +21,9 @@ const (
 )
 
 type User struct {
-	Id          int    `json:"id" gorm:"primaryKey;autoIncrement"`
-	Username    string `json:"username"`
-	Password    string `json:"password"`
-	LoginSecret string `json:"loginSecret"`
+	Id       int    `json:"id" gorm:"primaryKey;autoIncrement"`
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 type Inbound struct {
@@ -63,6 +62,11 @@ type InboundClientIps struct {
 	Ips         string `json:"ips" form:"ips"`
 }
 
+type HistoryOfSeeders struct {
+	Id         int    `json:"id" gorm:"primaryKey;autoIncrement"`
+	SeederName string `json:"seederName"`
+}
+
 func (i *Inbound) GenXrayInboundConfig() *xray.InboundConfig {
 	listen := i.Listen
 	if listen != "" {
@@ -98,5 +102,6 @@ type Client struct {
 	Enable     bool   `json:"enable" form:"enable"`
 	TgID       int64  `json:"tgId" form:"tgId"`
 	SubID      string `json:"subId" form:"subId"`
+	Comment    string `json:"comment" form:"comment"`
 	Reset      int    `json:"reset" form:"reset"`
 }
