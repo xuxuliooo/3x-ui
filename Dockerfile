@@ -1,14 +1,14 @@
 # ========================================================
 # Stage: Builder
 # ========================================================
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /app
 ARG TARGETARCH
 
 RUN apk --no-cache --update add \
   build-base \
   gcc \
-  wget \
+  curl \
   unzip
 
 COPY . .
@@ -49,6 +49,7 @@ RUN chmod +x \
   /usr/bin/x-ui
 
 ENV XUI_ENABLE_FAIL2BAN="true"
+EXPOSE 2053
 VOLUME [ "/etc/x-ui" ]
 CMD [ "./x-ui" ]
 ENTRYPOINT [ "/app/DockerEntrypoint.sh" ]
